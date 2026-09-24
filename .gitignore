@@ -1,0 +1,45 @@
+# Visual Studio
+.vs/
+*.user
+*.suo
+*.VC.db
+*.VC.opendb
+
+# Сборочные каталоги и временные файлы
+**/x64/
+**/Win32/
+**/Debug/
+**/Release/
+*.obj
+*.pdb
+*.ilk
+*.lib
+*.exp
+*.dll
+*.tlog/
+*.recipe
+*.log
+
+# Исключение для файлов проектов Visual Studio
+!Builds/VisualStudio2026/*.sln
+!Builds/VisualStudio2026/*.vcxproj
+!Builds/VisualStudio2026/*.vcxproj.filters
+!Builds/VisualStudio2026/resources.rc
+
+# JUCE/Projucer временные файлы
+*.jucer.user
+*.jucer.bak
+
+# Пакеты и установщики
+/dist/
+/Installer/Output/
+*.zip
+*.exe
+
+# Операционная система
+Thumbs.db
+.DS_Store
+
+# Visual Studio в любых вложенных папках
+**/.vs/
+**/*.vsidx
