@@ -2,6 +2,7 @@
 
 #include <JuceHeader.h>
 #include <atomic>
+#include <array>
 
 class MySynthAudioProcessor : public juce::AudioProcessor
 {
@@ -39,9 +40,15 @@ public:
     void setStateInformation(const void* data,
         int sizeInBytes) override;
 
+    // UI читает этот флаг, чтобы подсвечивать ноты MIDI-клавиатуры.
+    bool isMidiNoteActive(int midiNoteNumber) const noexcept;
+
     juce::AudioProcessorValueTreeState parameters;
 
 private:
+    // Аудиопоток записывает, GUI-поток только читает состояние нот.
+    std::array<std::atomic<bool>, 128> activeMidiNotes {};
+
     class SynthSound : public juce::SynthesiserSound
     {
     public:
@@ -77,7 +84,9 @@ private:
 
             // Параметры фильтра:
             std::atomic<float>* newCutoff,
-            std::atomic<float>* newResonance);
+            std::atomic<float>* newResonance,
+            std::atomic<float>* newFilterType,
+            std::atomic<float>* newFilterEnabled);
 
         void startNote(int midiNoteNumber,
             float velocity,
@@ -127,6 +136,10 @@ private:
 // Значения меняются из интерфейса и читаются аудиопотоком.
         std::atomic<float>* cutoff = nullptr;
         std::atomic<float>* resonance = nullptr;
+        // Указатель на выбор типа фильтра.
+        std::atomic<float>* filterType = nullptr;
+        // Этот флаг включает фильтрацию или прямой обход сигнала.
+        std::atomic<float>* filterEnabled = nullptr;
 
         juce::ADSR adsr;
         juce::ADSR::Parameters adsrParameters;

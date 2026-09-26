@@ -11,6 +11,8 @@
       <FILE id="zsxiaW" name="PluginEditor.cpp" compile="1" resource="0"
             file="Source/PluginEditor.cpp"/>
       <FILE id="VhAQlo" name="PluginEditor.h" compile="0" resource="0" file="Source/PluginEditor.h"/>
+      <FILE id="bgMySynth" name="MySynthBackground.png" compile="0" resource="1"
+            file="Source/Assets/MySynthBackground.png"/>
     </GROUP>
   </MAINGROUP>
   <MODULES>

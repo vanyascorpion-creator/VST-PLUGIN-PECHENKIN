@@ -33,7 +33,9 @@ MySynthAudioProcessor::MySynthAudioProcessor()
             parameters.getRawParameterValue("SUSTAIN"),
             parameters.getRawParameterValue("RELEASE"),
             parameters.getRawParameterValue("CUTOFF"),
-            parameters.getRawParameterValue("RESONANCE"));
+            parameters.getRawParameterValue("RESONANCE"),
+            parameters.getRawParameterValue("FILTER_TYPE"),
+            parameters.getRawParameterValue("FILTER_ENABLED"));
 
         synthesiser.addVoice(voice);
     }
@@ -81,6 +83,12 @@ MySynthAudioProcessor::createParameterLayout()
             "Triangle"
         },
         0));
+
+    // Отдельный флаг сохраняет существующие индексы типов фильтра.
+    layout.add(std::make_unique<juce::AudioParameterBool>(
+        "FILTER_ENABLED",
+        "Filter Enabled",
+        true));
 
     layout.add(std::make_unique<juce::AudioParameterChoice>(
         "WAVEFORM2",
@@ -134,6 +142,16 @@ MySynthAudioProcessor::createParameterLayout()
         juce::NormalisableRange<float>(
             0.1f, 10.0f, 0.1f),
         1.0f));
+
+    layout.add(std::make_unique<juce::AudioParameterChoice>(
+        "FILTER_TYPE",
+        "Filter Type",
+        juce::StringArray{
+            "Low-pass",
+            "High-pass",
+            "Band-pass"
+        },
+        0));
 
     return layout;
 }
@@ -229,6 +247,29 @@ void MySynthAudioProcessor::processBlock(
 {
     juce::ScopedNoDenormals noDenormals;
 
+    // Отслеживаем входящие ноты для визуальной клавиатуры.
+    // Атомарные флаги позволяют GUI читать состояние без блокировки аудио.
+    for (const auto metadata : midiMessages)
+    {
+        const auto message = metadata.getMessage();
+
+        if (message.isNoteOn())
+        {
+            activeMidiNotes[static_cast<size_t>(message.getNoteNumber())]
+                .store(true, std::memory_order_relaxed);
+        }
+        else if (message.isNoteOff())
+        {
+            activeMidiNotes[static_cast<size_t>(message.getNoteNumber())]
+                .store(false, std::memory_order_relaxed);
+        }
+        else if (message.isAllNotesOff() || message.isAllSoundOff())
+        {
+            for (auto& noteActive : activeMidiNotes)
+                noteActive.store(false, std::memory_order_relaxed);
+        }
+    }
+
     buffer.clear();
 
     synthesiser.renderNextBlock(
@@ -236,6 +277,16 @@ void MySynthAudioProcessor::processBlock(
         midiMessages,
         0,
         buffer.getNumSamples());
+}
+
+bool MySynthAudioProcessor::isMidiNoteActive(
+    int midiNoteNumber) const noexcept
+{
+    if (midiNoteNumber < 0 || midiNoteNumber >= 128)
+        return false;
+
+    return activeMidiNotes[static_cast<size_t>(midiNoteNumber)]
+        .load(std::memory_order_relaxed);
 }
 
 bool MySynthAudioProcessor::hasEditor() const
@@ -288,7 +339,10 @@ void MySynthAudioProcessor::SynthVoice::setParameterPointers(
     std::atomic<float>* newSustain,
     std::atomic<float>* newRelease,
     std::atomic<float>* newCutoff,
-    std::atomic<float>* newResonance)
+    std::atomic<float>* newResonance,
+    std::atomic<float>* newFilterType,
+    std::atomic<float>* newFilterEnabled)
+
 {
     oscillator1Level = newOscillator1Level;
     oscillator2Level = newOscillator2Level;
@@ -303,6 +357,10 @@ void MySynthAudioProcessor::SynthVoice::setParameterPointers(
 
     cutoff = newCutoff;
     resonance = newResonance;
+
+    // Сохраняем указатель на параметр типа фильтра.
+    filterType = newFilterType;
+    filterEnabled = newFilterEnabled;
 }
 
 void MySynthAudioProcessor::SynthVoice::prepare(
@@ -466,11 +524,43 @@ void MySynthAudioProcessor::SynthVoice::renderNextBlock(
     // Обновляем коэффициенты low-pass-фильтра.
     // Cutoff задаёт частоту среза,
     // Resonance — усиление около частоты среза.
-    filter.setCoefficients(
-        juce::IIRCoefficients::makeLowPass(
-            sampleRate,
-            static_cast<double>(currentCutoff),
-            static_cast<double>(currentResonance)));
+        // Индекс типа фильтра: 0 — Low-pass, 1 — High-pass, 2 — Band-pass.
+    const auto selectedFilterType =
+        filterType != nullptr
+        ? static_cast<int>(filterType->load())
+        : 0;
+
+    // Флаг управляет обходом фильтра в аудиопетле ниже.
+    const auto isFilterEnabled =
+        filterEnabled == nullptr || filterEnabled->load() >= 0.5f;
+
+    // Настраиваем выбранный фильтр с текущими Cutoff и Resonance.
+    switch (selectedFilterType)
+    {
+    case 1:
+        filter.setCoefficients(
+            juce::IIRCoefficients::makeHighPass(
+                sampleRate,
+                static_cast<double>(currentCutoff),
+                static_cast<double>(currentResonance)));
+        break;
+
+    case 2:
+        filter.setCoefficients(
+            juce::IIRCoefficients::makeBandPass(
+                sampleRate,
+                static_cast<double>(currentCutoff),
+                static_cast<double>(currentResonance)));
+        break;
+
+    default:
+        filter.setCoefficients(
+            juce::IIRCoefficients::makeLowPass(
+                sampleRate,
+                static_cast<double>(currentCutoff),
+                static_cast<double>(currentResonance)));
+        break;
+    }
 
     for (int sample = 0;
         sample < numSamples;
@@ -496,8 +586,10 @@ void MySynthAudioProcessor::SynthVoice::renderNextBlock(
                 * level
                 * envelope);
         // Пропускаем смешанный сигнал через low-pass-фильтр.
-        const auto filteredSample =
-            filter.processSingleSampleRaw(mixedSample);
+        // При выключенном фильтре пропускаем звук без обработки.
+        const auto filteredSample = isFilterEnabled
+            ? filter.processSingleSampleRaw(mixedSample)
+            : mixedSample;
 
         phase1 += phaseIncrement1;
         phase2 += phaseIncrement2;
